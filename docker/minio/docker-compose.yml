@@ -1,0 +1,22 @@
+# 【历史】单独启动 MinIO。新项目请优先使用仓库根目录 docker-compose.yml（已包含 MinIO），避免双实例抢占端口。
+# 使用：./start.sh 或 docker compose up -d
+
+services:
+  minio:
+    # 与本机已有镜像一致；生产环境建议改为固定 RELEASE 标签
+    image: minio/minio:latest
+    container_name: internal-resource-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PUBLISH_API_PORT:-9000}:9000"
+      - "${MINIO_PUBLISH_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+volumes:
+  minio_data:
+    name: internal_resource_minio_data

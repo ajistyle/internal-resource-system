@@ -1,0 +1,90 @@
+# 一键栈：MySQL + MinIO + 后端 + 前端（Nginx）
+#
+# 准备：cp .env.example .env，修改服务器上的 JWT / 密码 / VITE_API_URL（须为浏览器可访问的后端地址）
+# 启动：docker compose up -d --build
+# 或：  bash scripts/server-up.sh
+#
+# 浏览器：http://服务器IP:${FRONTEND_PORT}
+# 后端 API：http://服务器IP:${BACKEND_PORT}
+# MinIO S3 API：http://服务器IP:${MINIO_PUBLISH_API_PORT}  控制台：http://服务器IP:${MINIO_PUBLISH_CONSOLE_PORT}
+#
+# 业务数据目录：项目根下 ./data/mysql、./data/minio（与程序同目录，便于整体备份/迁移）
+# 部署手册：deploy/DEPLOYMENT.md · 数据迁移：deploy/README.md
+
+services:
+  mysql:
+    image: mysql:8.0
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      MYSQL_DATABASE: ${DB_DATABASE:-internal_resource_db}
+    ports:
+      - "${MYSQL_PORT:-23307}:3306"
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" || exit 1',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin_change_me}
+    volumes:
+      - ./data/minio:/data
+    ports:
+      - "${MINIO_PUBLISH_API_PORT:-29000}:9000"
+      - "${MINIO_PUBLISH_CONSOLE_PORT:-29001}:9001"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: ${BACKEND_CONTAINER_PORT:-3000}
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USERNAME: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123456}
+      DB_DATABASE: ${DB_DATABASE:-internal_resource_db}
+      JWT_SECRET: ${JWT_SECRET:-internal-resource-secret-change-in-prod}
+      # 与 compose 中的 minio 服务通信（容器内）；若要外接 MinIO，在 .env 里覆盖这些变量
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio}
+      MINIO_PORT: ${MINIO_PORT:-9000}
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      # 须与 MinIO 的 MINIO_ROOT_USER / MINIO_ROOT_PASSWORD 一致（见 .env.example）
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin_change_me}
+      MINIO_BUCKET: ${MINIO_BUCKET:-project-attachments}
+    ports:
+      - "${BACKEND_PORT:-23000}:${BACKEND_CONTAINER_PORT:-3000}"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      minio:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:23000}
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-28080}:80"
+    depends_on:
+      - backend
